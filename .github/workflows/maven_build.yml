@@ -1,0 +1,50 @@
+# This workflow will build a Java project with Maven, and cache/restore any dependencies to improve the workflow execution time
+# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-maven
+
+name: Java CI with Maven
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [closed]
+
+jobs:
+  build:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up JDK 16
+      uses: actions/setup-java@v2
+      with:
+        java-version: '16'
+        distribution: 'adopt'
+        cache: maven
+    - name: Build with Maven
+      run: |
+        mvn -B package --file pom.xml
+        zip -qr build_artifact.zip target/demo-0.0.1-SNAPSHOT.jar appspec.yml clientkeystore.jks cloudwatch-config.json ./scripts
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{secrets.ACCESS_KEY}}
+        aws-secret-access-key: ${{secrets.SECRET_KEY}}
+        aws-region: us-east-1
+    - name: Push artifact to s3
+      run: |
+        aws s3 cp build_artifact.zip s3://codedeploy.huayi0119.me/build_artifact.zip
+    - name: CodeDeploy API call
+      run: |
+        output=$(aws deploy create-deployment \
+          --application-name csye6225-webapp \
+          --deployment-config-name CodeDeployDefault.AllAtOnce \
+          --deployment-group-name csye6225-webapp-deployment \
+          --description "CSYE6255 - CodeDeploy" \
+          --s3-location bucket=codedeploy.huayi0119.me,key=build_artifact.zip,bundleType=zip \
+          --region us-east-1 \
+          --output json)
+          echo $output
+          dId=$(echo $output | jq -r '.deploymentId')
+          aws deploy wait deployment-successful --deployment-id $dId
